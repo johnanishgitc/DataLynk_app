@@ -1,0 +1,42 @@
+{
+  "cli": {
+    "version": ">= 5.9.1"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease",
+        "resourceClass": "medium",
+        "env": {
+          "ANDROID_NDK_HOME": "/opt/android-ndk",
+          "ANDROID_HOME": "/opt/android-sdk"
+        }
+      }
+    },
+    "production": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease",
+        "resourceClass": "medium",
+        "env": {
+          "ANDROID_NDK_HOME": "/opt/android-ndk",
+          "ANDROID_HOME": "/opt/android-sdk"
+        }
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

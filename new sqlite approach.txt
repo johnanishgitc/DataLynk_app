@@ -1,0 +1,590 @@
+Nice — thanks for the sample response (I looked at the JSON you attached). Based on that shape of data (vouchers → ledgers → inventory lines) and your SQLite schema, the fastest and most responsive drilldown/reporting will come from a mix of:
+
+* small, predictable denormalization (store the few fields you’ll always filter/group by on the inventory/summary rows),
+* pre-aggregation (materialized summary tables for the common periodicities and dimensions), and
+* judicious indexing (covering indexes for your common queries).
+
+I’ll give a concrete plan, reasons, and ready-to-run SQL patterns you can adapt. I referenced your sample JSON while sketching these (your file). 
+
+---
+
+# 1) Goals / report patterns to optimize for
+
+You said drilldown needs periodicity (daily/weekly/monthly/etc.), PARTYLEDGERNAME (party), STOCKITEMNAME (item), group, groupofgroup, category. Typical user flows:
+
+* “Show totals per day for this month”
+* “Drill into party X to see monthly, then item-level breakdown”
+* “Show category totals for last quarter, filter by groupofgroup”
+
+Design for these patterns.
+
+---
+
+# 2) Data modelling recommendations (minimal changes to your schema)
+
+1. **Canonical date storage**
+
+   * Normalize voucher.date to ISO `YYYY-MM-DD` on ingest (or store epoch integer). SQLite's `strftime()` works, but consistent ISO text or integer epoch is much faster to index and group on.
+   * Example: `date_iso TEXT` or `date_ts INTEGER` (UNIX seconds). I recommend `date_iso TEXT` `'2025-04-01'` and also store `date_ts INTEGER` if you plan range scans.
+
+2. **Denormalize key reporting fields into `inventories`**
+   Currently `inventories` references `ledger_id`. Add and populate these columns per inventory row:
+
+   * `voucher_id`, `date_iso`, `date_ts`, `party`, `partyid`, `company_guid`, `tallyloc_id`
+     This avoids expensive joins across vouchers → ledgers → inventories for every report.
+
+3. **Add period columns for fast grouping**
+   On ingestion compute and store:
+
+   * `day = date_iso`
+   * `week = strftime('%Y-%W', date_iso)`  (ISO week OK)
+   * `month = strftime('%Y-%m', date_iso)`
+   * `quarter = strftime('%Y', date_iso) || '-Q' || ((cast(strftime('%m', date_iso) as integer)-1)/3+1)`
+     These are cheap to compute once and allow simple `WHERE month = '2025-04'` groups.
+
+4. **Normalize group names/IDs**
+   If `group`, `groupofgroup`, `category` can vary in spelling, canonicalize them on ingest (trim, lowercase, mapping table).
+
+---
+
+# 3) Indexing strategy
+
+Create indexes tuned to your most frequent queries. Example indexes:
+
+```sql
+-- covering index for period + party + company
+CREATE INDEX IF NOT EXISTS idx_inv_company_period_party ON inventories(company_guid, tallyloc_id, month, partyid, itemid);
+
+-- index for category & group drilldowns
+CREATE INDEX IF NOT EXISTS idx_inv_company_period_category ON inventories(company_guid, tallyloc_id, month, category);
+CREATE INDEX IF NOT EXISTS idx_inv_company_group ON inventories(company_guid, tallyloc_id, group_name, groupofgroup);
+
+-- if using date_ts for range scans
+CREATE INDEX IF NOT EXISTS idx_inv_date_ts ON inventories(company_guid, tallyloc_id, date_ts);
+```
+
+Why these: queries will usually filter by company/tallyloc and period; having those first in the index makes it a covering index (SQLite can satisfy SELECTs without touching rows if you select only indexed columns).
+
+---
+
+# 4) Pre-aggregated (materialized) summary tables — the heart of speed
+
+Compute aggregates at ingest or in a background batch after sync. Maintain one or multiple pre-aggregates:
+
+A. **Master aggregated table** that is flexible (one row per combination of period/granularity/dimension):
+
+```sql
+CREATE TABLE IF NOT EXISTS aggregate_facts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_guid TEXT NOT NULL,
+  tallyloc_id INTEGER NOT NULL,
+  period_type TEXT NOT NULL,    -- 'day'|'week'|'month'|'quarter'
+  period_value TEXT NOT NULL,   -- e.g '2025-04-01' or '2025-04' or '2025-W14'
+  partyid TEXT,
+  itemid TEXT,
+  group_name TEXT,
+  groupofgroup TEXT,
+  category TEXT,
+  total_amount REAL DEFAULT 0,
+  qty_sum REAL DEFAULT 0,
+  item_count INTEGER DEFAULT 0,
+  createdAt TEXT,
+  UNIQUE(company_guid, tallyloc_id, period_type, period_value, partyid, itemid, group_name, groupofgroup, category)
+);
+```
+
+B. **Or** separate pre-aggregates per dimension (simpler and often faster):
+
+* `agg_by_party_month` (company, month, partyid -> amount, qty, itemcount)
+* `agg_by_item_month`
+* `agg_by_category_month`
+
+Pick whichever maps best to your UI. A single wide `aggregate_facts` supports ad-hoc drilldowns but will have more unique rows.
+
+---
+
+# 5) How to populate & keep aggregates current
+
+Two choices:
+
+1. **Incremental updates on insert** (fast queries later) — use a small sync-time job or triggers to update `aggregate_facts` when you insert new inventory rows. Example upsert pattern:
+
+```sql
+-- example: upsert aggregate row for month-level party+category
+INSERT INTO aggregate_facts(company_guid, tallyloc_id, period_type, period_value, partyid, category, total_amount, qty_sum, item_count, createdAt)
+VALUES(?, ?, 'month', ?, ?, ?, ?, ?, 1, datetime('now'))
+ON CONFLICT(company_guid, tallyloc_id, period_type, period_value, partyid, category) DO UPDATE SET
+  total_amount = total_amount + excluded.total_amount,
+  qty_sum = qty_sum + excluded.qty_sum,
+  item_count = item_count + excluded.item_count,
+  createdAt = datetime('now');
+```
+
+You can run this in a transaction per voucher to update many aggregate rows with low overhead.
+
+2. **Batch recompute after sync** (simpler to implement) — when sync finishes, run a few `INSERT ... SELECT ... GROUP BY ...` statements to refresh daily/monthly aggregates. This is fine if syncs are periodic and not extremely frequent.
+
+Recommendation: do incremental upserts while syncing each voucher. That keeps the UI responsive instantly and avoids large batch work on device.
+
+---
+
+# 6) Example: create month-party-category aggregate in one SQL step (batch)
+
+If you prefer a batch recompute for month-level:
+
+```sql
+-- delete existing month-level aggregates for date range/company if doing full refresh
+DELETE FROM aggregate_facts WHERE company_guid = ? AND tallyloc_id = ? AND period_type = 'month' AND period_value BETWEEN ? AND ?;
+
+-- insert fresh aggregates
+INSERT INTO aggregate_facts (company_guid, tallyloc_id, period_type, period_value, partyid, category, total_amount, qty_sum, item_count, createdAt)
+SELECT 
+  i.company_guid,
+  i.tallyloc_id,
+  'month' as period_type,
+  i.month as period_value,
+  i.partyid,
+  i.category,
+  SUM(i.amt) as total_amount,
+  SUM(i.qty) as qty_sum,
+  COUNT(*) as item_count,
+  datetime('now')
+FROM inventories i
+WHERE i.company_guid = ? AND i.tallyloc_id = ?
+  AND i.month BETWEEN ? AND ?
+GROUP BY i.company_guid, i.tallyloc_id, i.month, i.partyid, i.category;
+```
+
+---
+
+# 7) Example drilldown queries (fast because from aggregates)
+
+* Monthly totals per party:
+
+```sql
+SELECT period_value AS month, partyid, SUM(total_amount) total
+FROM aggregate_facts
+WHERE company_guid = ? AND tallyloc_id = ? AND period_type = 'month'
+GROUP BY period_value, partyid
+ORDER BY period_value DESC;
+```
+
+* For a selected month, show categories for a party:
+
+```sql
+SELECT category, SUM(total_amount) total, SUM(qty_sum) qty
+FROM aggregate_facts
+WHERE company_guid = ? AND tallyloc_id = ? AND period_type = 'month' AND period_value = '2025-04' AND partyid = ?
+GROUP BY category
+ORDER BY total DESC;
+```
+
+* Drill to item-level for a party-month:
+
+```sql
+SELECT itemid, SUM(total_amount) total, SUM(qty_sum) qty
+FROM aggregate_facts
+WHERE company_guid = ? AND tallyloc_id = ? AND period_type = 'month' AND period_value = '2025-04' AND partyid = ? AND category = ?
+GROUP BY itemid
+ORDER BY total DESC;
+```
+
+If you used separate `agg_by_item_month` you can query that directly.
+
+---
+
+# 8) Denormalized `inventories` example columns & ingest pseudocode
+
+Schema additions:
+
+```sql
+ALTER TABLE inventories ADD COLUMN voucher_id TEXT;
+ALTER TABLE inventories ADD COLUMN date_iso TEXT;
+ALTER TABLE inventories ADD COLUMN date_ts INTEGER;
+ALTER TABLE inventories ADD COLUMN day TEXT;
+ALTER TABLE inventories ADD COLUMN week TEXT;
+ALTER TABLE inventories ADD COLUMN month TEXT;
+ALTER TABLE inventories ADD COLUMN quarter TEXT;
+ALTER TABLE inventories ADD COLUMN partyid TEXT;
+ALTER TABLE inventories ADD COLUMN party TEXT;
+```
+
+On ingest of each voucher from JSON, for each inventory line:
+
+* parse voucher date, create `date_iso` & `date_ts`
+* compute `day`, `week`, `month`, `quarter`
+* copy `party` and `partyid` from parent voucher into inventory row
+* insert inventory row and then run the upsert to aggregate tables
+
+This keeps queries extremely cheap (no joins).
+
+---
+
+# 9) Additional optimizations & pragmatic tips
+
+* **Use transactions** when bulk inserting/updating (massively faster). Wrap per-voucher work in one transaction.
+* **Use prepared statements** in React native (or whichever native SQLite lib you use) for repeated upserts.
+* **Avoid SELECT COUNT(*) on big tables** — rely on aggregates table for counts.
+* **Use `EXPLAIN QUERY PLAN`** to check whether indexes are used and tune if not.
+* **Limit the number of indices**— each index slows writes. Keep indexes that match frequent filters (company, tallyloc, period).
+* **Trim and canonicalize text** (group/category) on ingest to reduce cardinality.
+* **Pagination**: for UI, request top N categories/items rather than thousands — you can always load more.
+* **Storage vs speed trade-off**: pre-aggregates use storage but deliver snappy UI. On mobile this is almost always the right trade.
+
+---
+
+# 10) Suggested implementation order (practical)
+
+1. Normalize incoming voucher date and denormalize party/date into `inventories`.
+2. Add `day/week/month` columns and index `(company_guid, tallyloc_id, month)` and `(company_guid, tallyloc_id, day)` .
+3. Implement a simple `agg_by_party_month` upsert that runs per voucher during sync.
+4. Add `agg_by_category_month` and `agg_by_item_month` as needed.
+5. Build the UI queries against these small aggregate tables. If you need ad-hoc rollups, compute on-demand from agg tables rather than raw inventories.
+
+---
+
+# 11) Example incremental upsert flow (pseudo-code)
+
+(assume one voucher with inventories[])
+
+1. begin transaction
+2. insert voucher, insert ledger rows, for each inventory row insert inventory (with denorm fields and period columns)
+3. for each inventory row:
+
+   * run `INSERT ... ON CONFLICT(...) DO UPDATE SET ...` into `aggregate_facts` for the relevant period types (day, month).
+   * (optionally) update `voucher_summary` too.
+4. commit transaction
+
+This keeps each voucher sync cost small and ensures aggregates are always query-ready.
+
+---
+
+# 12) Edge cases & practical notes
+
+* Weeks: be careful about your week definition (`%W` or ISO `%W` behavior). Use the one consistent with your business logic.
+* Null/unknown `groupofgroup`: use `''` not NULL to keep grouping stable or store a sentinel.
+* If you support ad-hoc date ranges across years, ensure `period_value` strings sort lexicographically (ISO does).
+
+---
+
+If you want, I can:
+
+* produce ready-to-run migration SQL to add the denormalized columns + indexes to your existing DB, **and**
+* produce a concrete per-voucher upsert SQL script (based on your exact fields) that you can paste into your mobile sync routine.
+
+Tell me which you want first (migration SQL or incremental upsert), and I’ll generate the SQL and example JS/React Native code to run it.
+
+
+Great — below are two safe migration options (pick one). Both assume you have a recent backup of the DB before running anything (very important). I include a **full-rebuild** SQL script (safe and idempotent) that will always work and populate the denormalized columns, create the aggregate table, indexes, and a trigger for incremental upserts. After the full script I also show a **quick ALTER** approach (shorter) if you prefer minimal changes.
+
+Run these in your sqlite3 client or from your app migration routine. Adjust table/column names if you changed them locally.
+
+---
+
+# Option A — Full rebuild (recommended / robust)
+
+This creates a new `inventories_new` table with the extra denormalized columns, copies data over by joining `inventories -> ledgers -> vouchers`, drops the old table and renames. Then creates `aggregate_facts`, indexes, a trigger that increments month/day aggregates, and backfills existing aggregates.
+
+```sql
+PRAGMA foreign_keys = OFF;
+BEGIN TRANSACTION;
+
+-- 1) Create new inventories table with denormalized fields and period columns
+CREATE TABLE IF NOT EXISTS inventories_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ledger_id TEXT NOT NULL,
+  item TEXT NOT NULL,
+  itemid TEXT NOT NULL,
+  uom TEXT,
+  qty REAL NOT NULL,
+  amt REAL NOT NULL,
+  deemd TEXT,
+  group_name TEXT,
+  groupofgroup TEXT,
+  category TEXT,
+  company_guid TEXT NOT NULL,
+  tallyloc_id INTEGER NOT NULL,
+  createdAt TEXT NOT NULL,
+
+  -- NEW denormalized / reporting columns
+  voucher_id TEXT,
+  date_iso TEXT,        -- 'YYYY-MM-DD'
+  date_ts INTEGER,      -- unix epoch seconds
+  day TEXT,             -- same as date_iso
+  week TEXT,            -- 'YYYY-WW' using %W
+  month TEXT,           -- 'YYYY-MM'
+  quarter TEXT,         -- 'YYYY-Qn'
+  party TEXT,
+  partyid TEXT
+);
+
+-- 2) Populate inventories_new by joining existing tables.
+--    Note: inventories.ledger_id -> ledgers.ledgerid, ledgers.voucher_id -> vouchers.mstid
+INSERT INTO inventories_new (
+  id, ledger_id, item, itemid, uom, qty, amt, deemd, group_name, groupofgroup, category,
+  company_guid, tallyloc_id, createdAt,
+  voucher_id, date_iso, date_ts, day, week, month, quarter, party, partyid
+)
+SELECT
+  i.id,
+  i.ledger_id,
+  i.item,
+  i.itemid,
+  i.uom,
+  i.qty,
+  i.amt,
+  i.deemd,
+  i.group_name,
+  i.groupofgroup,
+  i.category,
+  i.company_guid,
+  i.tallyloc_id,
+  i.createdAt,
+  -- denorm from joins
+  v.mstid AS voucher_id,
+  date(v.date) AS date_iso,
+  CAST(strftime('%s', v.date) AS INTEGER) AS date_ts,
+  date(v.date) AS day,
+  (strftime('%Y', v.date) || '-W' || substr('00' || strftime('%W', v.date), -2,2)) AS week,
+  (strftime('%Y', v.date) || '-' || substr('00' || strftime('%m', v.date), -2,2)) AS month,
+  (strftime('%Y', v.date) || '-Q' || ( ( (cast(strftime('%m', v.date) AS INTEGER)-1) / 3) + 1) ) AS quarter,
+  v.party AS party,
+  v.partyid AS partyid
+FROM inventories AS i
+LEFT JOIN ledgers AS l ON i.ledger_id = l.ledgerid
+LEFT JOIN vouchers AS v ON l.voucher_id = v.mstid;
+
+-- 3) Replace old inventories table
+DROP TABLE IF EXISTS inventories;
+ALTER TABLE inventories_new RENAME TO inventories;
+
+-- 4) Create aggregate_facts (master pre-aggregated table)
+CREATE TABLE IF NOT EXISTS aggregate_facts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_guid TEXT NOT NULL,
+  tallyloc_id INTEGER NOT NULL,
+  period_type TEXT NOT NULL,    -- 'day'|'week'|'month'|'quarter'
+  period_value TEXT NOT NULL,   -- '2025-04' or '2025-04-01' or '2025-W14' or '2025-Q2'
+  partyid TEXT,
+  itemid TEXT,
+  group_name TEXT,
+  groupofgroup TEXT,
+  category TEXT,
+  total_amount REAL DEFAULT 0,
+  qty_sum REAL DEFAULT 0,
+  item_count INTEGER DEFAULT 0,
+  createdAt TEXT,
+  -- uniqueness for upsert
+  UNIQUE(company_guid, tallyloc_id, period_type, period_value, partyid, itemid, group_name, groupofgroup, category)
+);
+
+-- 5) Indexes to serve common queries
+CREATE INDEX IF NOT EXISTS idx_inv_company_month_party ON inventories(company_guid, tallyloc_id, month, partyid, itemid);
+CREATE INDEX IF NOT EXISTS idx_inv_company_day ON inventories(company_guid, tallyloc_id, day);
+CREATE INDEX IF NOT EXISTS idx_inv_company_group ON inventories(company_guid, tallyloc_id, group_name, groupofgroup);
+CREATE INDEX IF NOT EXISTS idx_inv_company_category ON inventories(company_guid, tallyloc_id, category);
+CREATE INDEX IF NOT EXISTS idx_inv_date_ts ON inventories(company_guid, tallyloc_id, date_ts);
+
+CREATE INDEX IF NOT EXISTS idx_agg_company_period ON aggregate_facts(company_guid, tallyloc_id, period_type, period_value);
+CREATE INDEX IF NOT EXISTS idx_agg_party ON aggregate_facts(company_guid, tallyloc_id, period_type, period_value, partyid);
+CREATE INDEX IF NOT EXISTS idx_agg_category ON aggregate_facts(company_guid, tallyloc_id, period_type, period_value, category);
+
+-- 6) Trigger to incrementally upsert monthly & daily aggregates on inventory insert
+--    (You can expand this to week/quarter similarly)
+CREATE TRIGGER IF NOT EXISTS trg_inv_after_insert
+AFTER INSERT ON inventories
+BEGIN
+  -- MONTH upsert
+  INSERT INTO aggregate_facts (company_guid, tallyloc_id, period_type, period_value, partyid, category, itemid, group_name, groupofgroup, total_amount, qty_sum, item_count, createdAt)
+  VALUES (
+    NEW.company_guid,
+    NEW.tallyloc_id,
+    'month',
+    NEW.month,
+    NEW.partyid,
+    COALESCE(NEW.category, ''),
+    NEW.itemid,
+    COALESCE(NEW.group_name, ''),
+    COALESCE(NEW.groupofgroup, ''),
+    NEW.amt,
+    NEW.qty,
+    1,
+    datetime('now')
+  )
+  ON CONFLICT(company_guid, tallyloc_id, period_type, period_value, partyid, itemid, group_name, groupofgroup, category)
+  DO UPDATE SET
+    total_amount = total_amount + excluded.total_amount,
+    qty_sum = qty_sum + excluded.qty_sum,
+    item_count = item_count + excluded.item_count,
+    createdAt = datetime('now');
+
+  -- DAY upsert
+  INSERT INTO aggregate_facts (company_guid, tallyloc_id, period_type, period_value, partyid, category, itemid, group_name, groupofgroup, total_amount, qty_sum, item_count, createdAt)
+  VALUES (
+    NEW.company_guid,
+    NEW.tallyloc_id,
+    'day',
+    NEW.day,
+    NEW.partyid,
+    COALESCE(NEW.category, ''),
+    NEW.itemid,
+    COALESCE(NEW.group_name, ''),
+    COALESCE(NEW.groupofgroup, ''),
+    NEW.amt,
+    NEW.qty,
+    1,
+    datetime('now')
+  )
+  ON CONFLICT(company_guid, tallyloc_id, period_type, period_value, partyid, itemid, group_name, groupofgroup, category)
+  DO UPDATE SET
+    total_amount = total_amount + excluded.total_amount,
+    qty_sum = qty_sum + excluded.qty_sum,
+    item_count = item_count + excluded.item_count,
+    createdAt = datetime('now');
+END;
+
+-- 7) Backfill aggregate_facts from existing inventories (month/day/week/quarter)
+--    This will insert aggregated rows for the current data set.
+--    We use INSERT ... ON CONFLICT DO UPDATE to avoid duplicates on repeated runs.
+
+-- Month-level backfill
+INSERT INTO aggregate_facts (company_guid, tallyloc_id, period_type, period_value, partyid, category, itemid, group_name, groupofgroup, total_amount, qty_sum, item_count, createdAt)
+SELECT
+  i.company_guid,
+  i.tallyloc_id,
+  'month' AS period_type,
+  i.month AS period_value,
+  COALESCE(i.partyid, '') AS partyid,
+  COALESCE(i.category, '') AS category,
+  COALESCE(i.itemid, '') AS itemid,
+  COALESCE(i.group_name, '') AS group_name,
+  COALESCE(i.groupofgroup, '') AS groupofgroup,
+  SUM(i.amt) AS total_amount,
+  SUM(i.qty) AS qty_sum,
+  COUNT(*) AS item_count,
+  datetime('now')
+FROM inventories i
+GROUP BY i.company_guid, i.tallyloc_id, i.month, COALESCE(i.partyid,''), COALESCE(i.category,''), COALESCE(i.itemid,''), COALESCE(i.group_name,''), COALESCE(i.groupofgroup,'')
+
+ON CONFLICT(company_guid, tallyloc_id, period_type, period_value, partyid, itemid, group_name, groupofgroup, category)
+DO UPDATE SET
+  total_amount = aggregate_facts.total_amount + excluded.total_amount,
+  qty_sum = aggregate_facts.qty_sum + excluded.qty_sum,
+  item_count = aggregate_facts.item_count + excluded.item_count,
+  createdAt = datetime('now');
+
+-- Day-level backfill
+INSERT INTO aggregate_facts (company_guid, tallyloc_id, period_type, period_value, partyid, category, itemid, group_name, groupofgroup, total_amount, qty_sum, item_count, createdAt)
+SELECT
+  i.company_guid,
+  i.tallyloc_id,
+  'day' AS period_type,
+  i.day AS period_value,
+  COALESCE(i.partyid, '') AS partyid,
+  COALESCE(i.category, '') AS category,
+  COALESCE(i.itemid, '') AS itemid,
+  COALESCE(i.group_name, '') AS group_name,
+  COALESCE(i.groupofgroup, '') AS groupofgroup,
+  SUM(i.amt) AS total_amount,
+  SUM(i.qty) AS qty_sum,
+  COUNT(*) AS item_count,
+  datetime('now')
+FROM inventories i
+GROUP BY i.company_guid, i.tallyloc_id, i.day, COALESCE(i.partyid,''), COALESCE(i.category,''), COALESCE(i.itemid,''), COALESCE(i.group_name,''), COALESCE(i.groupofgroup,'')
+
+ON CONFLICT(company_guid, tallyloc_id, period_type, period_value, partyid, itemid, group_name, groupofgroup, category)
+DO UPDATE SET
+  total_amount = aggregate_facts.total_amount + excluded.total_amount,
+  qty_sum = aggregate_facts.qty_sum + excluded.qty_sum,
+  item_count = aggregate_facts.item_count + excluded.item_count,
+  createdAt = datetime('now');
+
+COMMIT;
+PRAGMA foreign_keys = ON;
+```
+
+**Notes on the full-rebuild script**
+
+* It populates `date_iso`, `date_ts`, `day`, `week`, `month`, `quarter`, `party`, `partyid` in the new `inventories` rows.
+* The `aggregate_facts` UNIQUE constraint covers all dimension columns used in the trigger upsert. If you want coarser aggregates (e.g., skip itemid for category-level rows), you can create a separate aggregate table per dimension instead — see Option B.
+* The trigger updates `month` and `day` aggregates on every inserted `inventories` row; you can extend it to week/quarter similarly.
+* If you have very large datasets and want to avoid heavy writes during this migration, consider doing the backfill in batches by date range.
+
+---
+
+# Option B — Quick ALTER approach (faster, but not idempotent)
+
+If you prefer small in-place changes (will error if columns already exist), run each `ALTER TABLE ... ADD COLUMN` once. This is faster but less safe if you rerun the script.
+
+```sql
+BEGIN TRANSACTION;
+
+ALTER TABLE inventories ADD COLUMN voucher_id TEXT;
+ALTER TABLE inventories ADD COLUMN date_iso TEXT;
+ALTER TABLE inventories ADD COLUMN date_ts INTEGER;
+ALTER TABLE inventories ADD COLUMN day TEXT;
+ALTER TABLE inventories ADD COLUMN week TEXT;
+ALTER TABLE inventories ADD COLUMN month TEXT;
+ALTER TABLE inventories ADD COLUMN quarter TEXT;
+ALTER TABLE inventories ADD COLUMN party TEXT;
+ALTER TABLE inventories ADD COLUMN partyid TEXT;
+
+-- Create aggregate table & indexes (same as above)
+CREATE TABLE IF NOT EXISTS aggregate_facts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_guid TEXT NOT NULL,
+  tallyloc_id INTEGER NOT NULL,
+  period_type TEXT NOT NULL,
+  period_value TEXT NOT NULL,
+  partyid TEXT,
+  itemid TEXT,
+  group_name TEXT,
+  groupofgroup TEXT,
+  category TEXT,
+  total_amount REAL DEFAULT 0,
+  qty_sum REAL DEFAULT 0,
+  item_count INTEGER DEFAULT 0,
+  createdAt TEXT,
+  UNIQUE(company_guid, tallyloc_id, period_type, period_value, partyid, itemid, group_name, groupofgroup, category)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inv_company_month_party ON inventories(company_guid, tallyloc_id, month, partyid, itemid);
+CREATE INDEX IF NOT EXISTS idx_agg_company_period ON aggregate_facts(company_guid, tallyloc_id, period_type, period_value);
+
+COMMIT;
+```
+
+After running the ALTERs you must **backfill** the new columns and populate `aggregate_facts`. Example backfill snippet:
+
+```sql
+-- backfill voucher_id, date_iso, date_ts, period columns, party/partyid
+UPDATE inventories
+SET
+  voucher_id = (SELECT v.mstid FROM ledgers l JOIN vouchers v ON l.voucher_id = v.mstid WHERE l.ledgerid = inventories.ledger_id LIMIT 1),
+  date_iso = (SELECT date(v.date) FROM ledgers l JOIN vouchers v ON l.voucher_id = v.mstid WHERE l.ledgerid = inventories.ledger_id LIMIT 1),
+  date_ts  = (SELECT CAST(strftime('%s', v.date) AS INTEGER) FROM ledgers l JOIN vouchers v ON l.voucher_id = v.mstid WHERE l.ledgerid = inventories.ledger_id LIMIT 1),
+  day = (SELECT date(v.date) FROM ledgers l JOIN vouchers v ON l.voucher_id = v.mstid WHERE l.ledgerid = inventories.ledger_id LIMIT 1),
+  week = (SELECT strftime('%Y', v.date) || '-W' || substr('00' || strftime('%W', v.date), -2,2) FROM ledgers l JOIN vouchers v ON l.voucher_id = v.mstid WHERE l.ledgerid = inventories.ledger_id LIMIT 1),
+  month = (SELECT strftime('%Y', v.date) || '-' || substr('00' || strftime('%m', v.date), -2,2) FROM ledgers l JOIN vouchers v ON l.voucher_id = v.mstid WHERE l.ledgerid = inventories.ledger_id LIMIT 1),
+  quarter = (SELECT strftime('%Y', v.date) || '-Q' || (( (cast(strftime('%m', v.date) AS INTEGER)-1) / 3) + 1) FROM ledgers l JOIN vouchers v ON l.voucher_id = v.mstid WHERE l.ledgerid = inventories.ledger_id LIMIT 1),
+  party = (SELECT v.party FROM ledgers l JOIN vouchers v ON l.voucher_id = v.mstid WHERE l.ledgerid = inventories.ledger_id LIMIT 1),
+  partyid = (SELECT v.partyid FROM ledgers l JOIN vouchers v ON l.voucher_id = v.mstid WHERE l.ledgerid = inventories.ledger_id LIMIT 1)
+;
+```
+
+Then create the indexes and backfill `aggregate_facts` just like in the full-rebuild script.
+
+---
+
+# Final practical notes
+
+* **Backup first.** Always take a file copy of the DB before running migrations.
+* **Test on a copy.** Run the full script on a copy to confirm results and performance.
+* **Batch backfill** if device memory/cpu is constrained: process inventories in date chunks (e.g., month-by-month).
+* **Cardinality & normalization:** if `group_name`, `groupofgroup`, or `category` have many variations, consider a small mapping table to canonicalize values before grouping.
+* **If you'd like**, I can:
+
+  * Produce a version of the migration that only creates `month` aggregates (smaller), or
+  * Give you a JS/React Native script (using `better-sqlite3` / `expo-sqlite` / `react-native-sqlite-storage`) that runs the ALTER or full-rebuild safely in the app, including progress logging and batch backfill.
+
+Which would you like next — a JS migration runner for React Native or the trimmed migration that only adds month/day aggregates?

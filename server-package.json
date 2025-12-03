@@ -1,0 +1,28 @@
+{
+  "name": "tally-catalyst-proxy-server",
+  "version": "1.0.0",
+  "description": "Local CORS proxy server for TallyCatalyst mobile app",
+  "main": "proxy-server.js",
+  "scripts": {
+    "start": "node proxy-server.js",
+    "dev": "nodemon proxy-server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "http-proxy-middleware": "^2.0.6"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "cors",
+    "proxy",
+    "tally",
+    "mobile",
+    "api"
+  ],
+  "author": "TallyCatalyst",
+  "license": "MIT"
+}
+
