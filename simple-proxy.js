@@ -26,7 +26,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { ...corsHeaders, 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'OK',
-      message: 'TallyCatalyst Simple Proxy Server is running',
+      message: 'DataLynk Simple Proxy Server is running',
       timestamp: new Date().toISOString()
     }));
     return;
@@ -67,8 +67,8 @@ const server = http.createServer((req, res) => {
         'x-tallyloc-id': req.headers['x-tallyloc-id'] || '',
         'x-company': req.headers['x-company'] || '',
         'x-guid': req.headers['x-guid'] || '',
-        'X-Proxy-By': 'TallyCatalyst-Simple-Proxy',
-        'User-Agent': req.headers['user-agent'] || 'TallyCatalyst-Proxy'
+        'X-Proxy-By': 'DataLynk-Simple-Proxy',
+        'User-Agent': req.headers['user-agent'] || 'DataLynk-Proxy'
       }
     };
     
@@ -113,7 +113,7 @@ const server = http.createServer((req, res) => {
 
 // Start server
 server.listen(PORT, () => {
-  console.log(`🚀 TallyCatalyst Simple Proxy Server running on http://localhost:${PORT}`);
+  console.log(`🚀 DataLynk Simple Proxy Server running on http://localhost:${PORT}`);
   console.log(`📡 Proxying API requests to: ${process.env.API_BASE_URL || 'https://itcatalystindia.com/Development/CustomerPortal_API'}`);
   console.log(`🌐 CORS enabled for all origins`);
   console.log(`💡 Health check: http://localhost:${PORT}/health`);

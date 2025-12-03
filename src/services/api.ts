@@ -132,7 +132,7 @@ class ApiService {
       if (typeof window !== 'undefined' && window.navigator && window.navigator.userAgent) {
         headers['User-Agent'] = window.navigator.userAgent;
       } else {
-        headers['User-Agent'] = 'TallyCatalyst-Mobile/1.0';
+        headers['User-Agent'] = 'DataLynk-Mobile/1.0';
       }
 
       // Add cache-busting headers for mobile to always get fresh data

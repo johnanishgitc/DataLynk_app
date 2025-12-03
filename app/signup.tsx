@@ -108,7 +108,7 @@ export default function SignupPage() {
           <View style={styles.header}>
             <Text style={styles.title}>Create Account</Text>
             <Image
-              source={require('../assets/TallyCatalyst.png')}
+              source={require('../assets/DLlogo.png')}
               style={styles.headerLogo}
               resizeMode="contain"
             />

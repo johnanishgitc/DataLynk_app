@@ -1,7 +1,7 @@
 {
   "name": "razorpay-server",
   "version": "1.0.0",
-  "description": "Razorpay payment server for TallyCatalyst",
+  "description": "Razorpay payment server for DataLynk",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

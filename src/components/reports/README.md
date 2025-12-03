@@ -187,7 +187,7 @@ When contributing to this component:
 
 ## License
 
-This component is part of the TallyCatalyst project and follows the same license terms.
+This component is part of the DataLynk project and follows the same license terms.
 
 
 

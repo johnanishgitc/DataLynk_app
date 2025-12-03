@@ -368,10 +368,10 @@ export const MapLocationPicker: React.FC<MapLocationPickerProps> = ({
             headers: {
               'User-Agent':
                 Platform.select({
-                  ios: 'TallyCatalyst/1.0 (iOS)',
-                  android: 'TallyCatalyst/1.0 (Android)',
-                  default: 'TallyCatalyst/1.0 (Web)',
-                }) ?? 'TallyCatalyst/1.0',
+                  ios: 'DataLynk/1.0 (iOS)',
+                  android: 'DataLynk/1.0 (Android)',
+                  default: 'DataLynk/1.0 (Web)',
+                }) ?? 'DataLynk/1.0',
             },
           }
         );

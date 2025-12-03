@@ -1,7 +1,7 @@
 {
-  "name": "tally-catalyst-proxy-server",
+  "name": "data-lynk-proxy-server",
   "version": "1.0.0",
-  "description": "Local CORS proxy server for TallyCatalyst mobile app",
+  "description": "Local CORS proxy server for DataLynk mobile app",
   "main": "proxy-server.js",
   "scripts": {
     "start": "node proxy-server.js",
@@ -22,7 +22,7 @@
     "mobile",
     "api"
   ],
-  "author": "TallyCatalyst",
+  "author": "DataLynk",
   "license": "MIT"
 }
 

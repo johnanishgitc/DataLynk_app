@@ -320,7 +320,7 @@ export default function LoginPage() {
           <View style={styles.header}>
             <TouchableOpacity onPress={handleLogoPress}>
               <Image
-                source={require('../assets/TallyCatalyst.png')}
+                source={require('../assets/DLlogo.png')}
                 style={styles.headerLogo}
                 resizeMode="contain"
               />

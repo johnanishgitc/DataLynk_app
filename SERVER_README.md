@@ -1,4 +1,4 @@
-# 🚀 TallyCatalyst Local Proxy Server
+# 🚀 DataLynk Local Proxy Server
 
 This local server solves CORS issues when testing the web version of your mobile app.
 

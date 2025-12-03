@@ -57,7 +57,7 @@ const dashboardMenuItems: MenuEntry[] = [
   {
     route: 'logout',
     label: 'Logoff',
-    description: 'Sign out from TallyCatalyst on this device.',
+    description: 'Sign out from DataLynk on this device.',
     icon: '🚪',
     destructive: true,
   },

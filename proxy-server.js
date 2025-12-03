@@ -20,7 +20,7 @@ app.use(express.json());
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: 'TallyCatalyst Proxy Server is running',
+    message: 'DataLynk Proxy Server is running',
     timestamp: new Date().toISOString()
   });
 });
@@ -43,7 +43,7 @@ function proxyRequest(req, res) {
     headers: {
       'Content-Type': 'application/json',
       'Authorization': req.headers.authorization || '',
-      'X-Proxy-By': 'TallyCatalyst-Local-Proxy'
+      'X-Proxy-By': 'DataLynk-Local-Proxy'
     }
   };
 
@@ -102,7 +102,7 @@ app.use('*', (req, res) => {
 
 // Start the server
 app.listen(PORT, () => {
-  console.log(`🚀 TallyCatalyst Proxy Server running on http://localhost:${PORT}`);
+  console.log(`🚀 DataLynk Proxy Server running on http://localhost:${PORT}`);
   console.log(`📡 Proxying API requests to: ${process.env.API_BASE_URL || 'https://itcatalystindia.com/Development/CustomerPortal_API'}`);
   console.log(`🌐 CORS enabled for: localhost:8081, localhost:3000, localhost:19006`);
   console.log(`💡 Health check: http://localhost:${PORT}/health`);

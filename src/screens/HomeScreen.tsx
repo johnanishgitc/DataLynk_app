@@ -19,7 +19,7 @@ const HomeScreen = memo(() => {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
-          <Text style={styles.title}>Welcome to TallyCatalyst</Text>
+          <Text style={styles.title}>Welcome to DataLynk</Text>
           <Text style={styles.subtitle}>
             Your mobile app for efficient data management
           </Text>

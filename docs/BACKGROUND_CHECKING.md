@@ -2,7 +2,7 @@
 
 ## Overview
 
-The TallyCatalyst mobile app includes a sophisticated background checking system that automatically monitors Tally for new optional vouchers and notifies users when they are found. This document explains how the system works and how to use it.
+The DataLynk mobile app includes a sophisticated background checking system that automatically monitors Tally for new optional vouchers and notifies users when they are found. This document explains how the system works and how to use it.
 
 ## Architecture
 

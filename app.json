@@ -1,24 +1,30 @@
 {
   "expo": {
-    "name": "TallyCatalyst",
-    "slug": "tally-catalyst-mobile",
+    "name": "DataLynk",
+    "slug": "data-lynk-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/DLlogo.png",
+    "splash": {
+      "image": "./assets/DLlogo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.tallycatalyst.mobile",
+      "bundleIdentifier": "com.datalynk.mobile",
       "infoPlist": {
         "UIBackgroundModes": [
           "fetch",
           "remote-notification"
         ],
-        "NSLocationWhenInUseUsageDescription": "Allow TallyCatalyst to access your location to prefill customer addresses and map positions."
+        "NSLocationWhenInUseUsageDescription": "Allow DataLynk to access your location to prefill customer addresses and map positions."
       }
     },
     "android": {
-      "package": "com.tallycatalyst.mobile",
+      "package": "com.datalynk.mobile",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -32,15 +38,15 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./public/favicon.ico"
+      "favicon": "./assets/DLlogo.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow TallyCatalyst to access your camera",
-          "microphonePermission": "Allow TallyCatalyst to access your microphone",
+          "cameraPermission": "Allow DataLynk to access your camera",
+          "microphonePermission": "Allow DataLynk to access your microphone",
           "recordAudioAndroid": true
         }
       ],

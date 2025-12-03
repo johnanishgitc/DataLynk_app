@@ -2,7 +2,7 @@
 
 ## 🎯 **Overview**
 
-This document outlines the comprehensive caching strategy for TallyCatalyst's sales analytics data, ensuring optimal performance and user experience while minimizing server calls.
+This document outlines the comprehensive caching strategy for DataLynk's sales analytics data, ensuring optimal performance and user experience while minimizing server calls.
 
 ## 🏗️ **Architecture**
 
@@ -280,7 +280,7 @@ const loadData = async () => {
 - **Improved reliability** with offline support
 - **Enhanced user satisfaction** with faster performance
 
-This comprehensive caching strategy ensures that TallyCatalyst provides a fast, reliable, and efficient sales analytics experience while minimizing server dependencies and maximizing user satisfaction.
+This comprehensive caching strategy ensures that DataLynk provides a fast, reliable, and efficient sales analytics experience while minimizing server dependencies and maximizing user satisfaction.
 
 
 

@@ -100,7 +100,7 @@ export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ ch
     enableRazorpayPayment: false,
     promptForOnlinePayment: false,
     razorpayKeyId: 'rzp_live_RIyEZsVN6uoqfq',
-    razorpayCompanyName: 'TallyCatalyst',
+    razorpayCompanyName: 'DataLynk',
     razorpayDescription: 'Order Payment',
     razorpayLedgerName: 'Bank',
     // Backend Configuration Integration - Default values
@@ -172,8 +172,8 @@ export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ ch
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
         // Web platform - use localStorage
-        const savedOrderConfig = localStorage.getItem('tallyCatalyst_orderConfig');
-        const savedMasterDataConfig = localStorage.getItem('tallyCatalyst_masterDataConfig');
+        const savedOrderConfig = localStorage.getItem('dataLynk_orderConfig');
+        const savedMasterDataConfig = localStorage.getItem('dataLynk_masterDataConfig');
         
         if (savedOrderConfig) {
           const parsedOrderConfig = JSON.parse(savedOrderConfig);
@@ -186,8 +186,8 @@ export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ ch
         }
       } else {
         // React Native platform - use AsyncStorage
-        const savedOrderConfig = await AsyncStorage.getItem('tallyCatalyst_orderConfig');
-        const savedMasterDataConfig = await AsyncStorage.getItem('tallyCatalyst_masterDataConfig');
+        const savedOrderConfig = await AsyncStorage.getItem('dataLynk_orderConfig');
+        const savedMasterDataConfig = await AsyncStorage.getItem('dataLynk_masterDataConfig');
         
         if (savedOrderConfig) {
           const parsedOrderConfig = JSON.parse(savedOrderConfig);
@@ -209,10 +209,10 @@ export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ ch
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
         // Web platform - use localStorage
-        localStorage.setItem('tallyCatalyst_orderConfig', JSON.stringify(config));
+        localStorage.setItem('dataLynk_orderConfig', JSON.stringify(config));
       } else {
         // React Native platform - use AsyncStorage
-        await AsyncStorage.setItem('tallyCatalyst_orderConfig', JSON.stringify(config));
+        await AsyncStorage.setItem('dataLynk_orderConfig', JSON.stringify(config));
       }
     } catch (error) {
       console.warn('Failed to save order configuration:', error);
@@ -223,10 +223,10 @@ export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ ch
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
         // Web platform - use localStorage
-        localStorage.setItem('tallyCatalyst_masterDataConfig', JSON.stringify(config));
+        localStorage.setItem('dataLynk_masterDataConfig', JSON.stringify(config));
       } else {
         // React Native platform - use AsyncStorage
-        await AsyncStorage.setItem('tallyCatalyst_masterDataConfig', JSON.stringify(config));
+        await AsyncStorage.setItem('dataLynk_masterDataConfig', JSON.stringify(config));
       }
     } catch (error) {
       console.warn('Failed to save master data configuration:', error);
@@ -268,7 +268,7 @@ export const ConfigurationProvider: React.FC<ConfigurationProviderProps> = ({ ch
       enableRazorpayPayment: false,
       promptForOnlinePayment: false,
       razorpayKeyId: 'rzp_live_RIyEZsVN6uoqfq',
-      razorpayCompanyName: 'TallyCatalyst',
+      razorpayCompanyName: 'DataLynk',
       razorpayDescription: 'Order Payment',
       razorpayLedgerName: 'Bank',
       // Backend Configuration Integration - Default values

@@ -119,7 +119,7 @@ export default function ForgotPasswordPage() {
           <View style={styles.header}>
             <Text style={styles.title}>Forgot Password</Text>
             <Image
-              source={require('../assets/TallyCatalyst.png')}
+              source={require('../assets/DLlogo.png')}
               style={styles.headerLogo}
               resizeMode="contain"
             />

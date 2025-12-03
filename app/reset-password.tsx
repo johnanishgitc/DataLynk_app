@@ -150,7 +150,7 @@ export default function ResetPasswordPage() {
           <View style={styles.header}>
             <Text style={styles.title}>Reset Password</Text>
             <Image
-              source={require('../assets/TallyCatalyst.png')}
+              source={require('../assets/DLlogo.png')}
               style={styles.headerLogo}
               resizeMode="contain"
             />
